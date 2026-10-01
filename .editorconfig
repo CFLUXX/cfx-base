@@ -1,0 +1,20 @@
+# .editorconfig
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 2
+end_of_line = lf
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
+
+[*.{c,cpp,ixx,cppm,hh,cc,cxx,h,hpp}]
+indent_size = 2
+
+[*.{cmake, CMakeLists.txt}]
+indent_size = 4
