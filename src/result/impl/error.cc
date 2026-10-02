@@ -9,7 +9,7 @@ module;
 #include <string>
 #include <utility>
 
-module cfx.result.error;
+module cfx.base.result.error;
 
 namespace cfx {
 Error::Error(
@@ -48,7 +48,7 @@ ErrorCategory Error::Category() const noexcept {
 }
 
 [[nodiscard]]
-constexpr StringView ToString(ErrorCode code) noexcept {
+constexpr StringView Error::ToString(ErrorCode code) noexcept {
   switch (code) {
   case ErrorCode::Ok:
     return "Ok";

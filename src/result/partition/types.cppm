@@ -21,7 +21,7 @@ module;
 #include <string_view>
 #include <vector>
 
-export module cfx.result.error:types;
+export module cfx.base.result.error:types;
 
 export namespace cfx {
 // ---------------------------------------

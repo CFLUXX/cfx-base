@@ -3,6 +3,12 @@
  * Copyright (c) 2026 CFLUXX
  * SPDX-License-Identifier: MIT
  */
+/**
+ * @file result.cppm
+ * @brief providethe type to deal with errors
+ * @anthor oldmnj
+ * @date 2026-10-02
+ */
 module;
 
 #include <concepts>
@@ -11,8 +17,9 @@ module;
 #include <type_traits>
 #include <utility>
 
-export module cfx.result.result;
-import cfx.result.error;
+export module cfx.base.result;
+export import cfx.base.result.error;
+import :exception;
 
 namespace cfx {
 
@@ -88,8 +95,9 @@ private:
   constexpr void destroy() noexcept {
     if (has_value_) {
       std::destroy_at(std::addressof(storage_.value));
+    } else {
+      std::destroy_at(std::addressof(storage_.error));
     }
-    std::destroy_at(std::addressof(storage_.error));
   }
 
   template <typename... Args>
@@ -238,15 +246,17 @@ public:
   }
 
   [[nodiscard]]
-  constexpr decltype(auto) Value(this auto &&self) noexcept {
+  constexpr decltype(auto) Value(this auto &&self) {
     if (!self.has_value_) {
-      std::unreachable();
+      throw BadResultAccess<E>{
+              std::forward<decltype(self)>(self).storage_.error
+      };
     }
     return (std::forward<decltype(self)>(self).storage_.value);
   }
 
   [[nodiscard]]
-  constexpr decltype(auto) Error(this auto &&self) noexcept {
+  constexpr decltype(auto) Error(this auto &&self) {
     if (self.has_value_) {
       std::unreachable();
     }
@@ -279,7 +289,7 @@ public:
   [[nodiscard]]
   constexpr T ValueOr(this auto &&self, U &&default_value) {
     if (self.has_value_) {
-      return std::forward<decltype(self)>(self).storage_.value;
+      return static_cast<T>(std::forward<decltype(self)>(self).storage_.value);
     }
     return static_cast<T>(std::forward<U>(default_value));
   }
@@ -525,6 +535,12 @@ public:
   [[nodiscard]] constexpr bool HasError() const noexcept { return !has_value_; }
   [[nodiscard]] constexpr explicit operator bool() const noexcept {
     return has_value_;
+  }
+
+  [[nodiscard]] constexpr decltype(auto) Value(this auto &&self) {
+    if (!self.has_value_) {
+      throw BadResultAccess{std::forward<decltype(self)>(self).storage_.error};
+    }
   }
 
   [[nodiscard]] constexpr decltype(auto) Error(this auto &&self) noexcept {
