@@ -28,5 +28,5 @@ TEST(ResultTest, HoldsError) {
   auto res_err = test_error_to_string();
   std::cout << res.Error().ToString() << std::endl
             << res_err.Error().ToString() << std::endl
-            << res_err.Error().Location().function_name();
+            << res.Error().ToString().size();
 }

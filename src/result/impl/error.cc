@@ -217,7 +217,10 @@ String Error::ToString() const {
           it, "Error[{}:{}] {}", ToString(category_), ToString(code_), message_
   );
   if (location_.file_name() != nullptr && location_.line() != 0) {
-    fmt::format_to(it, "\n  at {}:{}", location_.file_name(), location_.line());
+    fmt::format_to(
+            it, "\n  at {}:{} in {}", location_.file_name(), location_.line(),
+            location_.function_name()
+    );
   }
 
   if (this->HasCause()) {

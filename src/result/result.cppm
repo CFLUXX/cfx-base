@@ -12,6 +12,7 @@
 module;
 
 #include <concepts>
+#include <expected>
 #include <memory>
 #include <new>
 #include <type_traits>
@@ -70,6 +71,14 @@ private:
   static_assert(!std::is_reference_v<T>, "Result: T cannot be reference");
   static_assert(!std::is_reference_v<E>, "Result: E cannot be reference");
   static_assert(
+          !std::is_same_v<std::remove_cv_t<T>, InPlaceValueTag>,
+          "Result: T cannot be InPlaceValueTag"
+  );
+  static_assert(
+          !std::is_same_v<std::remove_cv_t<E>, InPlaceErrorTag>,
+          "Result: E cannot be InPlaceErrorTag"
+  );
+  static_assert(
           !std::is_void_v<T>, "Result: use Result<void, E> for void value"
   );
   static_assert(!std::is_void_v<E>, "Result: E cannot be void");
@@ -83,8 +92,8 @@ private:
   );
 
   union ResultStorage {
-    T value;
-    E error;
+    [[no_unique_address]] T value;
+    [[no_unique_address]] E error;
     constexpr ResultStorage() noexcept {}
     constexpr ~ResultStorage() noexcept {}
   };
@@ -148,6 +157,28 @@ public:
     );
   }
 
+  template <class U = T>
+    requires(!std::is_same_v<T, E>) &&
+            (!std::is_same_v<std::remove_cvref_t<U>, Result>) &&
+            (!std::is_same_v<std::remove_cvref_t<U>, std::expected<T, E>>) &&
+            (!std::is_same_v<std::remove_cvref_t<U>, std::unexpected<E>>) &&
+            std::is_constructible_v<T, U &&> &&
+            (!std::is_constructible_v<E, U &&>)
+  constexpr Result(U &&value) : has_value_(true) {
+    std::construct_at(std::addressof(storage_.value), std::forward<U>(value));
+  }
+
+  template <class G = E>
+    requires(!std::is_same_v<T, E>) &&
+            (!std::is_same_v<std::remove_cvref_t<G>, Result>) &&
+            (!std::is_same_v<std::remove_cvref_t<G>, std::expected<T, E>>) &&
+            (!std::is_same_v<std::remove_cvref_t<G>, std::unexpected<E>>) &&
+            std::is_constructible_v<E, G &&> &&
+            (!std::is_constructible_v<T, G &&>)
+  constexpr Result(G &&error) : has_value_(false) {
+    std::construct_at(std::addressof(storage_.error), std::forward<G>(error));
+  }
+
   constexpr Result(const Result &other) noexcept(
           std::is_nothrow_copy_constructible_v<T> &&
           std::is_nothrow_copy_constructible_v<E>
@@ -173,6 +204,36 @@ public:
     }
   }
 
+  template <typename U, typename G>
+    requires std::is_constructible_v<T, const U &> &&
+             std::is_constructible_v<E, const U &>
+  constexpr explicit Result(const std::expected<U, G> &exp) noexcept(
+          std::is_nothrow_copy_constructible_v<U> &&
+          std::is_nothrow_copy_constructible_v<G>
+  )
+      : has_value_(exp.has_value()) {
+    if (exp.has_value()) {
+      std::construct_at(std::addressof(storage_.value), *exp);
+    } else {
+      std::construct_at(std::addressof(storage_.error), exp.error());
+    }
+  }
+
+  // noexcept: see static_assert
+  template <typename U, typename G>
+    requires std::is_constructible_v<T, U &&> &&
+             std::is_constructible_v<E, G &&> &&
+             (!std::is_nothrow_move_constructible_v<U>) &&
+             (!std::is_nothrow_move_constructible_v<G>)
+  constexpr Result(std::expected<U, G> &&exp) noexcept
+      : has_value_(exp.has_value()) {
+    if (exp.has_value()) {
+      std::construct_at(std::addressof(storage_.value), std::move(*exp));
+    } else {
+      std::construct_at(std::addressof(storage_.error), std::move(exp).error());
+    }
+  }
+
   constexpr ~Result() noexcept { destroy(); };
 
   constexpr Result &operator=(const Result &other) {
@@ -186,8 +247,8 @@ public:
         storage_.error = other.storage_.error;
       }
     } else {
-      Result tmp{other};
       destroy();
+      Result tmp{other};
       if (tmp.has_value_) {
         construct_value(std::move(tmp.storage_.value));
       } else {
@@ -444,7 +505,7 @@ class Result<void, E> {
 
 
   union ResultStorage {
-    E error;
+    [[no_unique_address]] E error;
     constexpr ResultStorage() noexcept {}
     constexpr ~ResultStorage() noexcept {}
   };
@@ -476,6 +537,17 @@ public:
     );
   }
 
+  template <class G = E>
+    requires(!std::is_same_v<void, E>) &&
+            (!std::is_same_v<std::remove_cvref_t<G>, Result>) &&
+            (!std::is_same_v<std::remove_cvref_t<G>, std::expected<void, E>>) &&
+            (!std::is_same_v<std::remove_cvref_t<G>, std::unexpected<E>>) &&
+            std::is_constructible_v<E, G &&> &&
+            (!std::is_constructible_v<void, G &&>)
+  constexpr Result(G &&error) : has_value_(false) {
+    std::construct_at(std::addressof(storage_.error), std::forward<G>(error));
+  }
+
   constexpr Result(
           const Result &other
   ) noexcept(std::is_nothrow_copy_constructible_v<E>)
@@ -489,6 +561,27 @@ public:
       std::construct_at(
               std::addressof(storage_.error), std::move(other.storage_.error)
       );
+  }
+
+  template <typename G>
+    requires std::is_constructible_v<G, const E &>
+  constexpr Result(
+          const std::expected<void, G> &exp
+  ) noexcept(std::is_nothrow_copy_constructible_v<G>)
+      : has_value_(exp.has_value()) {
+    if (!exp.has_value()) {
+      std::construct_at(std::addressof(storage_.error), exp.error());
+    }
+  }
+
+  template <typename G>
+    requires std::is_constructible_v<G, E &&> &&
+             std::is_nothrow_move_constructible_v<G>
+  constexpr Result(std::expected<void, E> &&exp) noexcept
+      : has_value_(exp.has_value_()) {
+    if (!exp.has_value()) {
+      std::construct_at(std::addressof(storage_.error), std::move(exp).error());
+    }
   }
 
   constexpr ~Result() noexcept { destroy(); }
@@ -708,4 +801,22 @@ constexpr Result<T, E> ErrEmplace(Args &&...args) {
   return Result<T, E>{InPlaceErrorTag{}, std::forward<Args>(args)...};
 }
 
+export template <typename T, typename E>
+[[nodiscard]]
+constexpr auto ResultToExpected(const Result<T, E> &res)
+        -> std::expected<T, E> {
+  if (res.HasValue()) {
+    return std::expected{std::in_place_t{}, *res};
+  }
+  return std::expected{std::unexpect_t{}, res.Error()};
+}
+
+export template <typename T, typename E>
+[[nodiscard]]
+constexpr auto ResultToExpected(Result<T, E> &&res) -> std::expected<T, E> {
+  if (res.HasValue()) {
+    return std::expected{std::in_place_t{}, std::move(*res)};
+  }
+  return std::expected{std::unexpect_t{}, std::move(res).Error()};
+}
 }  // namespace cfx
