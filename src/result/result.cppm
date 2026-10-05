@@ -5,8 +5,8 @@
  */
 /**
  * @file result.cppm
- * @brief providethe type to deal with errors
- * @anthor oldmnj
+ * @brief provide the type to deal with errors
+ * @author oldmnj
  * @date 2026-10-02
  */
 module;
@@ -25,8 +25,6 @@ namespace cfx {
 
 export struct InPlaceValueTag {};
 export struct InPlaceErrorTag {};
-export struct InPlaceOkTag {};
-export struct InPlaceErrTag {};
 
 export template <typename T, typename E>
 class Result;
@@ -60,8 +58,7 @@ template <typename R>
 using ResultErrorOf = typename ResultTraits<RemoveCvRef<R>>::ErrorType;
 
 template <typename T>
-concept NothrowMove = std::is_nothrow_move_constructible_v<T> &&
-                      std::is_nothrow_destructible_v<T>;
+concept NothrowMove = std::is_nothrow_move_constructible_v<T>;
 }  // namespace detail
 
 /**
@@ -71,7 +68,7 @@ concept NothrowMove = std::is_nothrow_move_constructible_v<T> &&
  * @tparam T the type of expected value (maybe cv void).
  * @tparam E the type of unexpected value.
  *
- * @note T and E connot be reference types.
+ * @note T and E cannot be reference types.
  */
 export template <typename T, typename E = Error>
 class Result {
@@ -83,27 +80,44 @@ private:
           "Result: T cannot be InPlaceValueTag"
   );
   static_assert(
-          !std::is_same_v<std::remove_cv_t<E>, InPlaceErrorTag>,
-          "Result: E cannot be InPlaceErrorTag"
+          !std::is_same_v<std::remove_cv_t<T>, InPlaceErrorTag>,
+          "Result: T cannot be InPlaceErrorTag"
   );
   static_assert(
           !std::is_void_v<T>, "Result: use Result<void, E> for void value"
   );
   static_assert(!std::is_void_v<E>, "Result: E cannot be void");
   static_assert(!std::is_const_v<T>, "Result: T cannot be const");
-  static_assert(!std::is_const_v<E>, "Result: E cannot be const");
+  static_assert(
+          !std::is_const_v<E>, "Result: E cannot be const"
+  );  /// else we cannot assign values to E or T
+  static_assert(
+          std::is_nothrow_destructible_v<T>, "Result: destroy T must be nothrow"
+  );
+  static_assert(
+          std::is_nothrow_destructible_v<E>, "Result: destroy E must be nothrow"
+  );
+  /*
+   * 以下断言替代为构造函数，赋值函数等等的requires
   static_assert(
           detail::NothrowMove<T>, "Result: T must be nothrow-move/destructible"
   );
   static_assert(
           detail::NothrowMove<E>, "Result: E must be nothrow-move/destructible"
   );
+  */
 
   union ResultStorage {
     [[no_unique_address]] T value;
     [[no_unique_address]] E error;
     constexpr ResultStorage() noexcept {}
     constexpr ~ResultStorage() noexcept {}
+
+    /// The lifecycle of ResultStorage is controlled by Result.
+    ResultStorage(const ResultStorage &)                   = delete;
+    auto operator=(const ResultStorage &) -> ResultStorage = delete;
+    ResultStorage(ResultStorage &&)                        = delete;
+    auto operator=(ResultStorage &&) -> ResultStorage      = delete;
   };
 
   ResultStorage storage_;
@@ -200,7 +214,10 @@ public:
   }
 
   // static_assert保证
-  constexpr Result(Result &&other) noexcept : has_value_(other.has_value_) {
+  constexpr Result(Result &&other) noexcept
+    requires detail::NothrowMove<T> && detail::NothrowMove<E> &&
+             std::is_move_constructible_v<T> && std::is_move_constructible_v<E>
+      : has_value_(other.has_value_) {
     if (has_value_) {
       std::construct_at(
               std::addressof(storage_.value), std::move(other.storage_.value)
@@ -231,8 +248,8 @@ public:
   template <typename U, typename G>
     requires std::is_constructible_v<T, U &&> &&
              std::is_constructible_v<E, G &&> &&
-             (!std::is_nothrow_move_constructible_v<U>) &&
-             (!std::is_nothrow_move_constructible_v<G>)
+             std::is_nothrow_move_constructible_v<U> &&
+             std::is_nothrow_move_constructible_v<G>
   constexpr Result(std::expected<U, G> &&exp) noexcept
       : has_value_(exp.has_value()) {
     if (exp.has_value()) {
@@ -244,7 +261,12 @@ public:
 
   constexpr ~Result() noexcept { destroy(); };
 
-  constexpr auto operator=(const Result &other) -> Result & {
+  constexpr auto operator=(const Result &other) noexcept(
+          std::is_nothrow_copy_constructible_v<T> &&
+          std::is_nothrow_copy_constructible_v<E> &&
+          std::is_nothrow_copy_assignable_v<T> &&
+          std::is_nothrow_copy_assignable_v<E>
+  ) -> Result & {
     if (this == std::addressof(other)) {
       return *this;
     }
@@ -255,8 +277,8 @@ public:
         storage_.error = other.storage_.error;
       }
     } else {
-      destroy();
       Result tmp{other};
+      destroy();
       if (tmp.has_value_) {
         construct_value(std::move(tmp.storage_.value));
       } else {
@@ -266,7 +288,10 @@ public:
     return *this;
   }
 
-  constexpr auto operator=(Result &&other) noexcept -> Result & {
+  constexpr auto operator=(Result &&other) noexcept -> Result &
+    requires detail::NothrowMove<T> && detail::NothrowMove<E> &&
+             std::is_move_constructible_v<T> && std::is_move_constructible_v<E>
+  {
     if (this == std::addressof(other)) {
       return *this;
     }
@@ -302,11 +327,11 @@ public:
 
 
   [[nodiscard]]
-  constexpr auto HasValue() noexcept -> bool {
+  constexpr auto HasValue() const noexcept -> bool {
     return has_value_;
   }
   [[nodiscard]]
-  constexpr auto HasError() noexcept -> bool {
+  constexpr auto HasError() const noexcept -> bool {
     return !has_value_;
   }
   [[nodiscard]]
@@ -338,6 +363,7 @@ public:
     using Ptr = std::conditional_t<
             std::is_const_v<std::remove_reference_t<decltype(self)>>, const T *,
             T *>;
+    /// ValueIf and ErrorIf: 如果为右值版本,Ptr = T*,临时r销毁后,指针会悬垂
     return self.has_value_
                    ? static_cast<Ptr>(std::addressof(self.storage_.value))
                    : static_cast<Ptr>(nullptr);
@@ -354,7 +380,7 @@ public:
   }
 
   template <typename U>
-    requires std::constructible_from<T, U>
+    requires std::constructible_from<T, U &&>
   [[nodiscard]]
   constexpr auto ValueOr(this auto &&self, U &&default_value) -> T {
     if (self.has_value_) {
@@ -363,21 +389,30 @@ public:
     return static_cast<T>(std::forward<U>(default_value));
   }
 
+  /**
+   * @brief get reference of  Value
+   *
+   * @return reference of value(Deduce reference type from object state)
+   *
+   * @note the version of && will return a dangling pointer.
+   */
   [[nodiscard]]
   constexpr auto operator*(this auto &&self) noexcept -> decltype(auto) {
-    return std::forward<decltype(self)>(self).Value;
+    return std::forward<decltype(self)>(self).storage_.value;
   }
 
   [[nodiscard]]
   constexpr auto operator->(this auto &&self) noexcept {
-    return std::addressof(std::forward<decltype(self)>(self).Value());
+    return std::addressof(std::forward<decltype(self)>(self).storage_.value);
   }
 
 
   template <typename F>
-    requires std::invocable<F, decltype(std::declval<Result &>().Value())>
   [[nodiscard]]
-  constexpr auto Map(this auto &&self, F f) {
+  constexpr auto Map(this auto &&self, F &&f)
+    requires std::invocable<
+            F, decltype(std::forward<decltype(self)>(self).Value())>
+  {
     using Self = decltype(self);
     using U =
             std::invoke_result_t<F, decltype(std::forward<Self>(self).Value())>;
@@ -398,19 +433,19 @@ public:
   }
 
   template <typename F>
-    requires std::invocable<F, decltype(std::declval<Result &>().Error())>
   [[nodiscard]]
-  constexpr auto MapErr(this auto &&self, F f) {
+  constexpr auto MapErr(this auto &&self, F &&f)
+    requires(!std::is_void_v<std::invoke_result_t<
+                     F, decltype(std::forward<decltype(self)>(self).Error())>>) &&
+            std::invocable<
+                    F, decltype(std::forward<decltype(self)>(self).Error())>
+  {
     using Self = decltype(self);
     using F_ =
             std::invoke_result_t<F, decltype(std::forward<Self>(self).Error())>;
 
     if (self.has_value_) {
       return Result<T, F_>{InPlaceValueTag{}, std::forward<Self>(self).Value()};
-    }
-    if constexpr (std::is_void_v<F_>) {
-      std::forward<F>(f)(std::forward<Self>(self).Error());
-      return Result<T, void>{InPlaceErrorTag{}};
     }
     return Result<T, F_>{
             InPlaceErrorTag{},
@@ -419,45 +454,55 @@ public:
   }
 
   template <typename F>
-    requires std::invocable<F, decltype(std::declval<Result &>().Value())> &&
-             detail::IsResult<std::invoke_result_t<
-                     F, decltype(std::declval<Result &>().Value())>>
-  [[nodiscard]] constexpr auto AndThen(this auto &&self, F &&f) {
+  [[nodiscard]] constexpr auto AndThen(this auto &&self, F &&f)
+    requires detail::IsResult<std::invoke_result_t<
+                     F, decltype(std::forward<decltype(self)>(self).Value())>> &&
+             std::is_constructible_v<
+                     typename detail::ResultTraits<
+                             detail::RemoveCvRef<std::invoke_result_t<
+                                     F, decltype(std::forward<decltype(self)>(self)
+                                                         .Value())>>>::ErrorType,
+                     E> &&
+             std::invocable<
+                     F, decltype(std::forward<decltype(self)>(self).Value())>
+
+  {
     using Self = decltype(self);
     using U =
             std::invoke_result_t<F, decltype(std::forward<Self>(self).Value())>;
     using Traits = detail::ResultTraits<detail::RemoveCvRef<U>>;
-    static_assert(
-            std::is_same_v<typename Traits::ErrorType, E>,
-            "AndThen: chained Result must use same Error type"
-    );
+    using Res    = detail::RemoveCvRef<U>;
 
     if (self.has_value_) {
       return std::forward<F>(f)(std::forward<Self>(self).Value());
     }
 
-    return U{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
+    return Res{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
   }
 
   template <typename F>
-    requires std::invocable<F, decltype(std::declval<Result &>().Error())> &&
-             detail::IsResult<std::invoke_result_t<
-                     F, decltype(std::declval<Result &>().Error())>>
-  [[nodiscard]] constexpr auto OrElse(this auto &&self, F &&f) {
+  [[nodiscard]] constexpr auto OrElse(this auto &&self, F &&f)
+    requires detail::IsResult<std::invoke_result_t<
+                     F, decltype(std::forward<decltype(self)>(self).Error())>> &&
+             std::invocable<
+                     F, decltype(std::forward<decltype(self)>(self).Error())>
+
+  {
     using Self = decltype(self);
     using U =
             std::invoke_result_t<F, decltype(std::forward<Self>(self).Error())>;
     using Traits = detail::ResultTraits<detail::RemoveCvRef<U>>;
     using UVal   = typename Traits::ValueType;
+    using Res    = detail::RemoveCvRef<U>;
 
     if (!self.has_value_) {
       return std::forward<F>(f)(std::forward<Self>(self).Error());
     }
     if constexpr (std::is_void_v<UVal>) {
-      return U{InPlaceValueTag{}};
+      return Res{InPlaceValueTag{}};
     }
 
-    return U{InPlaceValueTag{}, std::forward<Self>(self).Value()};
+    return Res{InPlaceValueTag{}, std::forward<Self>(self).Value()};
   }
 
   template <typename F>
@@ -511,7 +556,8 @@ export template <typename E>
 class Result<void, E> {
   static_assert(!std::is_void_v<E>, "Result: E cannot be void");
   static_assert(
-          detail::NothrowMove<E>, "Result: E must be nothrow-move/destructible"
+          std::is_nothrow_destructible_v<E>,
+          "Result: E must be nothrow-destructible"
   );
   static_assert(!std::is_const_v<E>, "Result: E cannot be const");
 
@@ -520,6 +566,11 @@ class Result<void, E> {
     [[no_unique_address]] E error;
     constexpr ResultStorage() noexcept {}
     constexpr ~ResultStorage() noexcept {}
+
+    ResultStorage(const ResultStorage &)                   = delete;
+    auto operator=(const ResultStorage &) -> ResultStorage = delete;
+    ResultStorage(ResultStorage &&)                        = delete;
+    auto operator=(ResultStorage &&) -> ResultStorage      = delete;
   };
 
   ResultStorage storage_;
@@ -570,7 +621,9 @@ public:
     }
   }
 
-  constexpr Result(Result &&other) noexcept : has_value_(other.has_value_) {
+  constexpr Result(Result &&other) noexcept
+    requires detail::NothrowMove<E> && std::is_move_constructible_v<E>
+      : has_value_(other.has_value_) {
     if (!has_value_) {
       std::construct_at(
               std::addressof(storage_.error), std::move(other.storage_.error)
@@ -590,10 +643,10 @@ public:
   }
 
   template <typename G>
-    requires std::is_constructible_v<G, E &&> &&
+    requires std::is_constructible_v<E, G &&> &&
              std::is_nothrow_move_constructible_v<G>
-  constexpr Result(std::expected<void, E> &&exp) noexcept
-      : has_value_(exp.has_value_()) {
+  constexpr Result(std::expected<void, G> &&exp) noexcept
+      : has_value_(exp.has_value()) {
     if (!exp.has_value()) {
       std::construct_at(std::addressof(storage_.error), std::move(exp).error());
     }
@@ -601,7 +654,10 @@ public:
 
   constexpr ~Result() noexcept { destroy(); }
 
-  constexpr auto operator=(const Result &other) -> Result & {
+  constexpr auto operator=(const Result &other) noexcept(
+          std::is_nothrow_copy_constructible_v<E> &&
+          std::is_nothrow_copy_assignable_v<E>
+  ) -> Result & {
     if (this == std::addressof(other)) {
       return *this;
     }
@@ -613,14 +669,16 @@ public:
       Result tmp(other);
       destroy();
       has_value_ = tmp.has_value_;
-      if (!has_value_) {
+      if (!tmp.has_value_) {
         construct_error(std::move(tmp.storage_.error));
       }
     }
     return *this;
   }
 
-  constexpr auto operator=(Result &&other) noexcept -> Result & {
+  constexpr auto operator=(Result &&other) noexcept -> Result &
+    requires detail::NothrowMove<E> && std::is_move_constructible_v<E>
+  {
     if (this == std::addressof(other)) {
       return *this;
     }
@@ -639,6 +697,9 @@ public:
   }
 
   constexpr void Swap(Result &other) noexcept {
+    if (this == std::addressof(other)) {
+      return;
+    }
     Result tmp(std::move(other));
     other = std::move(*this);
     *this = std::move(tmp);
@@ -655,7 +716,7 @@ public:
     return has_value_;
   }
 
-  [[nodiscard]] constexpr auto Value(this auto &&self) -> decltype(auto) {
+  [[nodiscard]] constexpr auto Value(this auto &&self) -> void {
     if (!self.has_value_) {
       throw BadResultAccess{std::forward<decltype(self)>(self).storage_.error};
     }
@@ -697,12 +758,15 @@ public:
   }
 
   template <typename F>
-    requires std::invocable<F, decltype(std::declval<Result &>().Error())>
-  [[nodiscard]] constexpr auto MapErr(this auto &&self, F &&f) {
+  [[nodiscard]] constexpr auto MapErr(this auto &&self, F &&f)
+    requires(!std::is_void_v<std::invoke_result_t<
+                     F, decltype(std::forward<decltype(self)>(self).Error())>>) &&
+            std::invocable<
+                    F, decltype(std::forward<decltype(self)>(self).Error())>
+  {
     using Self = decltype(self);
     using F_ =
             std::invoke_result_t<F, decltype(std::forward<Self>(self).Error())>;
-    static_assert(!std::is_void_v<F_>, "MapErr: F must return non-void");
 
     if (self.has_value_) {
       return Result<void, F_>{InPlaceValueTag{}};
@@ -714,44 +778,50 @@ public:
   }
 
   template <typename F>
-    requires std::invocable<F> && detail::IsResult<std::invoke_result_t<F>>
-  [[nodiscard]] constexpr auto AndThen(this auto &&self, F &&f) {
+    requires detail::IsResult<std::invoke_result_t<F>> &&
+             std::invocable<F>
+             [[nodiscard]] constexpr auto AndThen(this auto &&self, F &&f)
+               requires std::is_constructible_v<
+                       typename detail::ResultTraits<detail::RemoveCvRef<
+                               std::invoke_result_t<F>>>::ErrorType,
+                       E>
+  {
     using Self   = decltype(self);
     using U      = std::invoke_result_t<F>;
     using Traits = detail::ResultTraits<detail::RemoveCvRef<U>>;
-    static_assert(
-            std::is_same_v<typename Traits::ErrorType, E>,
-            "AndThen: chained Result must use same Error type"
-    );
+    using Res    = detail::RemoveCvRef<U>;
 
     if (self.has_value_) {
       return std::forward<F>(f)();
     }
 
-    return U{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
+    return Res{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
   }
 
   template <typename F>
-    requires std::invocable<F, decltype(std::declval<Result &>().Error())> &&
+  [[nodiscard]] constexpr auto OrElse(this auto &&self, F &&f)
+    requires std::is_void_v<typename detail::ResultTraits<
+                     detail::RemoveCvRef<std::invoke_result_t<
+                             F, decltype(std::forward<decltype(self)>(self)
+                                                 .Error())>>>::ValueType> &&
+             std::invocable<
+                     F, decltype(std::forward<decltype(self)>(self).Error())> &&
              detail::IsResult<std::invoke_result_t<
-                     F, decltype(std::declval<Result &>().Error())>>
-  [[nodiscard]] constexpr auto OrElse(this auto &&self, F &&f) {
+                     F, decltype(std::forward<decltype(self)>(self).Error())>>
+
+  {
     using Self = decltype(self);
     using U =
             std::invoke_result_t<F, decltype(std::forward<Self>(self).Error())>;
     using Traits = detail::ResultTraits<detail::RemoveCvRef<U>>;
     using UVal   = typename Traits::ValueType;
+    using Res    = detail::RemoveCvRef<U>;
 
     if (!self.has_value_) {
       return std::forward<F>(f)(std::forward<Self>(self).Error());
     }
-    if constexpr (std::is_void_v<UVal>) {
-      return U{InPlaceValueTag{}};
-    }
 
-    return U{InPlaceValueTag{}, /* void -> U 需要 f 返回值 */};
-    // 注：void Result 的 OrElse 成功分支无法直接产生非 void U 的值，
-    //     所以这里要求 UVal 必须为 void；如需转换请用 AndThen/Map。
+    return Res{InPlaceValueTag{}};
   }
 
   template <typename F>
@@ -789,12 +859,22 @@ public:
     }
     return self;
   }
+
+  friend constexpr auto operator==(const Result &a, const Result &b) -> bool
+    requires std::equality_comparable<E>
+  {
+    if (a.has_value_ != b.has_value_) {
+      return false;
+    }
+    return a.has_value_ ? (true) : (a.storage_.error == b.storage_.error);
+  }
 };
 
-// Ok - 成功值
 export template <typename T = void, typename E = Error>
 [[nodiscard]]
-constexpr auto Ok() -> Result<T, E> {
+constexpr auto Ok() -> Result<T, E>
+  requires std::is_void_v<T> || std::is_default_constructible_v<T>
+{
   if constexpr (std::is_void_v<T>) {
     return Result<T, E>{};
   } else {
@@ -802,36 +882,58 @@ constexpr auto Ok() -> Result<T, E> {
   }
 }
 
-export template <typename T, typename E = Error>
+export template <typename T>
 [[nodiscard]]
-constexpr auto Ok(T &&value) -> Result<std::decay_t<T>, E> {
-  return Result<std::decay_t<T>, E>{InPlaceValueTag{}, std::forward<T>(value)};
+constexpr auto Ok(T &&value)
+        -> Result<std::remove_cv_t<std::remove_reference_t<T>>, Error> {
+  using V = std::remove_cv_t<std::remove_reference_t<T>>;
+  return Result<V, Error>{InPlaceValueTag{}, std::forward<T>(value)};
+}
+
+export template <typename T, typename E = Error, typename U>
+  requires std::constructible_from<T, U &&>
+[[nodiscard]]
+constexpr auto Ok(U &&value) -> Result<T, E> {
+  return Result<T, E>{InPlaceValueTag{}, std::forward<U>(value)};
+}
+
+export template <typename T = void, typename E = Error>
+[[nodiscard]]
+constexpr auto Err() -> Result<T, E>
+  requires std::is_void_v<T>
+{
+  return Result<T, E>{InPlaceErrorTag{}};
+}
+
+export template <typename E>
+[[nodiscard]]
+constexpr auto Err(E &&error)
+        -> Result<void, std::remove_cv_t<std::remove_reference_t<E>>> {
+  using EE = std::remove_cv_t<std::remove_reference_t<E>>;
+  return Result<void, EE>{InPlaceErrorTag{}, std::forward<E>(error)};
+}
+
+export template <typename T = void, typename E, typename G>
+  requires std::constructible_from<E, G &&>
+[[nodiscard]]
+constexpr auto Err(G &&error) -> Result<T, E> {
+  return Result<T, E>{InPlaceErrorTag{}, std::forward<G>(error)};
 }
 
 export template <typename T, typename E = Error, typename... Args>
+  requires std::constructible_from<T, Args...>
 [[nodiscard]]
 constexpr auto OkEmplace(Args &&...args) -> Result<T, E> {
   return Result<T, E>{InPlaceValueTag{}, std::forward<Args>(args)...};
 }
 
-// Err - 错误值
-export template <typename T = void, typename E = Error>
-[[nodiscard]]
-constexpr auto Err(E &&error) -> Result<T, E> {
-  return Result<T, E>{InPlaceErrorTag{}, std::forward<E>(error)};
-}
-
-export template <typename T = void, typename E = Error>
-[[nodiscard]]
-constexpr auto Err(const E &error) -> Result<T, E> {
-  return Result<T, E>{InPlaceErrorTag{}, error};
-}
-
-export template <typename T = void, typename E = Error, typename... Args>
+export template <typename T = void, typename E, typename... Args>
+  requires std::constructible_from<E, Args...>
 [[nodiscard]]
 constexpr auto ErrEmplace(Args &&...args) -> Result<T, E> {
   return Result<T, E>{InPlaceErrorTag{}, std::forward<Args>(args)...};
 }
+
 
 export template <typename T, typename E>
 [[nodiscard]]

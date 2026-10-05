@@ -245,8 +245,8 @@ String Error::ToString() const {
       );
       if (cur->location_.file_name() != nullptr && cur->location_.line() != 0) {
         fmt::format_to(
-                it, "\n    at {}:{}", cur->location_.file_name(),
-                cur->location_.line()
+                it, "\n    at {}:{} in {}", cur->location_.file_name(),
+                cur->location_.line(), cur->location_.function_name()
         );
       }
       cur = cur->cause_.get();

@@ -9,7 +9,7 @@ TEST(ResultTest, HoldsValue) {
 }
 
 auto test_error_to_string() {
-  return cfx::Err(
+  return cfx::Err<cfx::Error>(
           {cfx::ErrorCategory::Auth, cfx::ErrorCode::AuthExpired,
            "Failed to login?"}
   );

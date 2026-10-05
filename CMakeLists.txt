@@ -10,6 +10,12 @@ set(CMAKE_CXX_MODULE_STANDARD 23)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+if (MSVC)
+    add_compile_options("/d1trimfile:${CMAKE_SOURCE_DIR}/")
+else()
+    add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}/=")
+endif()
+
 
 find_package(fmt)
 
