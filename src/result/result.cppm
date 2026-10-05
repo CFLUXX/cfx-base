@@ -14,7 +14,6 @@ module;
 #include <concepts>
 #include <expected>
 #include <memory>
-#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -65,6 +64,15 @@ concept NothrowMove = std::is_nothrow_move_constructible_v<T> &&
                       std::is_nothrow_destructible_v<T>;
 }  // namespace detail
 
+/**
+ * @brief A wrapper that contains either an expected value of type T or an
+ * unexpected value of type E.
+ *
+ * @tparam T the type of expected value (maybe cv void).
+ * @tparam E the type of unexpected value.
+ *
+ * @note T and E connot be reference types.
+ */
 export template <typename T, typename E = Error>
 class Result {
 private:
@@ -236,7 +244,7 @@ public:
 
   constexpr ~Result() noexcept { destroy(); };
 
-  constexpr Result &operator=(const Result &other) {
+  constexpr auto operator=(const Result &other) -> Result & {
     if (this == std::addressof(other)) {
       return *this;
     }
@@ -258,7 +266,7 @@ public:
     return *this;
   }
 
-  constexpr Result &operator=(Result &&other) noexcept {
+  constexpr auto operator=(Result &&other) noexcept -> Result & {
     if (this == std::addressof(other)) {
       return *this;
     }
@@ -294,11 +302,11 @@ public:
 
 
   [[nodiscard]]
-  constexpr bool HasValue() noexcept {
+  constexpr auto HasValue() noexcept -> bool {
     return has_value_;
   }
   [[nodiscard]]
-  constexpr bool HasError() noexcept {
+  constexpr auto HasError() noexcept -> bool {
     return !has_value_;
   }
   [[nodiscard]]
@@ -307,7 +315,7 @@ public:
   }
 
   [[nodiscard]]
-  constexpr decltype(auto) Value(this auto &&self) {
+  constexpr auto Value(this auto &&self) -> decltype(auto) {
     if (!self.has_value_) {
       throw BadResultAccess<E>{
               std::forward<decltype(self)>(self).storage_.error
@@ -317,7 +325,7 @@ public:
   }
 
   [[nodiscard]]
-  constexpr decltype(auto) Error(this auto &&self) {
+  constexpr auto Error(this auto &&self) -> decltype(auto) {
     if (self.has_value_) {
       std::unreachable();
     }
@@ -348,7 +356,7 @@ public:
   template <typename U>
     requires std::constructible_from<T, U>
   [[nodiscard]]
-  constexpr T ValueOr(this auto &&self, U &&default_value) {
+  constexpr auto ValueOr(this auto &&self, U &&default_value) -> T {
     if (self.has_value_) {
       return static_cast<T>(std::forward<decltype(self)>(self).storage_.value);
     }
@@ -356,7 +364,7 @@ public:
   }
 
   [[nodiscard]]
-  constexpr decltype(auto) operator*(this auto &&self) noexcept {
+  constexpr auto operator*(this auto &&self) noexcept -> decltype(auto) {
     return std::forward<decltype(self)>(self).Value;
   }
 
@@ -399,17 +407,15 @@ public:
 
     if (self.has_value_) {
       return Result<T, F_>{InPlaceValueTag{}, std::forward<Self>(self).Value()};
-    } else {
-      if constexpr (std::is_void_v<F_>) {
-        std::forward<F>(f)(std::forward<Self>(self).Error());
-        return Result<T, void>{InPlaceErrorTag{}};
-      } else {
-        return Result<T, F_>{
-                InPlaceErrorTag{},
-                std::forward<F>(f)(std::forward<Self>(self).Error())
-        };
-      }
     }
+    if constexpr (std::is_void_v<F_>) {
+      std::forward<F>(f)(std::forward<Self>(self).Error());
+      return Result<T, void>{InPlaceErrorTag{}};
+    }
+    return Result<T, F_>{
+            InPlaceErrorTag{},
+            std::forward<F>(f)(std::forward<Self>(self).Error())
+    };
   }
 
   template <typename F>
@@ -426,10 +432,11 @@ public:
             "AndThen: chained Result must use same Error type"
     );
 
-    if (self.has_value_)
+    if (self.has_value_) {
       return std::forward<F>(f)(std::forward<Self>(self).Value());
-    else
-      return U{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
+    }
+
+    return U{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
   }
 
   template <typename F>
@@ -445,51 +452,56 @@ public:
 
     if (!self.has_value_) {
       return std::forward<F>(f)(std::forward<Self>(self).Error());
-    } else {
-      if constexpr (std::is_void_v<UVal>)
-        return U{InPlaceValueTag{}};
-      else
-        return U{InPlaceValueTag{}, std::forward<Self>(self).Value()};
     }
+    if constexpr (std::is_void_v<UVal>) {
+      return U{InPlaceValueTag{}};
+    }
+
+    return U{InPlaceValueTag{}, std::forward<Self>(self).Value()};
   }
 
   template <typename F>
     requires std::invocable<F, T &>
-  constexpr Result &IfValue(this Result &self, F &&f) {
-    if (self.has_value_)
+  constexpr auto IfValue(this Result &self, F &&f) -> Result & {
+    if (self.has_value_) {
       std::forward<F>(f)(self.storage_.value);
+    }
     return self;
   }
 
   template <typename F>
     requires std::invocable<F, const T &>
-  constexpr const Result &IfValue(this const Result &self, F &&f) {
-    if (self.has_value_)
+  constexpr auto IfValue(this const Result &self, F &&f) -> const Result & {
+    if (self.has_value_) {
       std::forward<F>(f)(self.storage_.value);
+    }
     return self;
   }
 
   template <typename F>
     requires std::invocable<F, E &>
-  constexpr Result &IfError(this Result &self, F &&f) {
-    if (!self.has_value_)
+  constexpr auto IfError(this Result &self, F &&f) -> Result & {
+    if (!self.has_value_) {
       std::forward<F>(f)(self.storage_.error);
+    }
     return self;
   }
 
   template <typename F>
     requires std::invocable<F, const E &>
-  constexpr const Result &IfError(this const Result &self, F &&f) {
-    if (!self.has_value_)
+  constexpr auto IfError(this const Result &self, F &&f) -> const Result & {
+    if (!self.has_value_) {
       std::forward<F>(f)(self.storage_.error);
+    }
     return self;
   }
 
-  friend constexpr bool operator==(const Result &a, const Result &b)
+  friend constexpr auto operator==(const Result &a, const Result &b) -> bool
     requires std::equality_comparable<T> && std::equality_comparable<E>
   {
-    if (a.has_value_ != b.has_value_)
+    if (a.has_value_ != b.has_value_) {
       return false;
+    }
     return a.has_value_ ? (a.storage_.value == b.storage_.value)
                         : (a.storage_.error == b.storage_.error);
   }
@@ -514,8 +526,9 @@ class Result<void, E> {
   bool has_value_;
 
   constexpr void destroy() noexcept {
-    if (!has_value_)
+    if (!has_value_) {
       std::destroy_at(std::addressof(storage_.error));
+    }
   }
 
 public:
@@ -552,15 +565,17 @@ public:
           const Result &other
   ) noexcept(std::is_nothrow_copy_constructible_v<E>)
       : has_value_(other.has_value_) {
-    if (!has_value_)
+    if (!has_value_) {
       std::construct_at(std::addressof(storage_.error), other.storage_.error);
+    }
   }
 
   constexpr Result(Result &&other) noexcept : has_value_(other.has_value_) {
-    if (!has_value_)
+    if (!has_value_) {
       std::construct_at(
               std::addressof(storage_.error), std::move(other.storage_.error)
       );
+    }
   }
 
   template <typename G>
@@ -586,33 +601,39 @@ public:
 
   constexpr ~Result() noexcept { destroy(); }
 
-  constexpr Result &operator=(const Result &other) {
-    if (this == std::addressof(other))
+  constexpr auto operator=(const Result &other) -> Result & {
+    if (this == std::addressof(other)) {
       return *this;
+    }
     if (has_value_ == other.has_value_) {
-      if (!has_value_)
+      if (!has_value_) {
         storage_.error = other.storage_.error;
+      }
     } else {
       Result tmp(other);
       destroy();
       has_value_ = tmp.has_value_;
-      if (!has_value_)
+      if (!has_value_) {
         construct_error(std::move(tmp.storage_.error));
+      }
     }
     return *this;
   }
 
-  constexpr Result &operator=(Result &&other) noexcept {
-    if (this == std::addressof(other))
+  constexpr auto operator=(Result &&other) noexcept -> Result & {
+    if (this == std::addressof(other)) {
       return *this;
+    }
     if (has_value_ == other.has_value_) {
-      if (!has_value_)
+      if (!has_value_) {
         storage_.error = std::move(other.storage_.error);
+      }
     } else {
       destroy();
       has_value_ = other.has_value_;
-      if (!has_value_)
+      if (!has_value_) {
         construct_error(std::move(other.storage_.error));
+      }
     }
     return *this;
   }
@@ -624,21 +645,27 @@ public:
   }
   friend constexpr void swap(Result &a, Result &b) noexcept { a.Swap(b); }
 
-  [[nodiscard]] constexpr bool HasValue() const noexcept { return has_value_; }
-  [[nodiscard]] constexpr bool HasError() const noexcept { return !has_value_; }
+  [[nodiscard]] constexpr auto HasValue() const noexcept -> bool {
+    return has_value_;
+  }
+  [[nodiscard]] constexpr auto HasError() const noexcept -> bool {
+    return !has_value_;
+  }
   [[nodiscard]] constexpr explicit operator bool() const noexcept {
     return has_value_;
   }
 
-  [[nodiscard]] constexpr decltype(auto) Value(this auto &&self) {
+  [[nodiscard]] constexpr auto Value(this auto &&self) -> decltype(auto) {
     if (!self.has_value_) {
       throw BadResultAccess{std::forward<decltype(self)>(self).storage_.error};
     }
   }
 
-  [[nodiscard]] constexpr decltype(auto) Error(this auto &&self) noexcept {
-    if (self.has_value_)
+  [[nodiscard]] constexpr auto Error(this auto &&self) noexcept
+          -> decltype(auto) {
+    if (self.has_value_) {
       std::unreachable();
+    }
     return (std::forward<decltype(self)>(self).storage_.error);
   }
 
@@ -677,13 +704,13 @@ public:
             std::invoke_result_t<F, decltype(std::forward<Self>(self).Error())>;
     static_assert(!std::is_void_v<F_>, "MapErr: F must return non-void");
 
-    if (self.has_value_)
+    if (self.has_value_) {
       return Result<void, F_>{InPlaceValueTag{}};
-    else
-      return Result<void, F_>{
-              InPlaceErrorTag{},
-              std::forward<F>(f)(std::forward<Self>(self).Error())
-      };
+    }
+    return Result<void, F_>{
+            InPlaceErrorTag{},
+            std::forward<F>(f)(std::forward<Self>(self).Error())
+    };
   }
 
   template <typename F>
@@ -697,10 +724,11 @@ public:
             "AndThen: chained Result must use same Error type"
     );
 
-    if (self.has_value_)
+    if (self.has_value_) {
       return std::forward<F>(f)();
-    else
-      return U{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
+    }
+
+    return U{InPlaceErrorTag{}, std::forward<Self>(self).Error()};
   }
 
   template <typename F>
@@ -716,45 +744,49 @@ public:
 
     if (!self.has_value_) {
       return std::forward<F>(f)(std::forward<Self>(self).Error());
-    } else {
-      if constexpr (std::is_void_v<UVal>)
-        return U{InPlaceValueTag{}};
-      else
-        return U{InPlaceValueTag{}, /* void -> U 需要 f 返回值 */};
-      // 注：void Result 的 OrElse 成功分支无法直接产生非 void U 的值，
-      //     所以这里要求 UVal 必须为 void；如需转换请用 AndThen/Map。
     }
+    if constexpr (std::is_void_v<UVal>) {
+      return U{InPlaceValueTag{}};
+    }
+
+    return U{InPlaceValueTag{}, /* void -> U 需要 f 返回值 */};
+    // 注：void Result 的 OrElse 成功分支无法直接产生非 void U 的值，
+    //     所以这里要求 UVal 必须为 void；如需转换请用 AndThen/Map。
   }
 
   template <typename F>
     requires std::invocable<F>
-  constexpr Result &IfValue(this Result &self, F &&f) {
-    if (self.has_value_)
+  constexpr auto IfValue(this Result &self, F &&f) -> Result & {
+    if (self.has_value_) {
       std::forward<F>(f)();
+    }
     return self;
   }
 
   template <typename F>
     requires std::invocable<F>
-  constexpr const Result &IfValue(this const Result &self, F &&f) {
-    if (self.has_value_)
+  constexpr auto IfValue(this const Result &self, F &&f) -> const Result & {
+    if (self.has_value_) {
       std::forward<F>(f)();
+    }
     return self;
   }
 
   template <typename F>
     requires std::invocable<F, E &>
-  constexpr Result &IfError(this Result &self, F &&f) {
-    if (!self.has_value_)
+  constexpr auto IfError(this Result &self, F &&f) -> Result & {
+    if (!self.has_value_) {
       std::forward<F>(f)(self.storage_.error);
+    }
     return self;
   }
 
   template <typename F>
     requires std::invocable<F, const E &>
-  constexpr const Result &IfError(this const Result &self, F &&f) {
-    if (!self.has_value_)
+  constexpr auto IfError(this const Result &self, F &&f) -> const Result & {
+    if (!self.has_value_) {
       std::forward<F>(f)(self.storage_.error);
+    }
     return self;
   }
 };
@@ -762,7 +794,7 @@ public:
 // Ok - 成功值
 export template <typename T = void, typename E = Error>
 [[nodiscard]]
-constexpr Result<T, E> Ok() {
+constexpr auto Ok() -> Result<T, E> {
   if constexpr (std::is_void_v<T>) {
     return Result<T, E>{};
   } else {
@@ -772,32 +804,32 @@ constexpr Result<T, E> Ok() {
 
 export template <typename T, typename E = Error>
 [[nodiscard]]
-constexpr Result<std::decay_t<T>, E> Ok(T &&value) {
+constexpr auto Ok(T &&value) -> Result<std::decay_t<T>, E> {
   return Result<std::decay_t<T>, E>{InPlaceValueTag{}, std::forward<T>(value)};
 }
 
 export template <typename T, typename E = Error, typename... Args>
 [[nodiscard]]
-constexpr Result<T, E> OkEmplace(Args &&...args) {
+constexpr auto OkEmplace(Args &&...args) -> Result<T, E> {
   return Result<T, E>{InPlaceValueTag{}, std::forward<Args>(args)...};
 }
 
 // Err - 错误值
 export template <typename T = void, typename E = Error>
 [[nodiscard]]
-constexpr Result<T, E> Err(E &&error) {
+constexpr auto Err(E &&error) -> Result<T, E> {
   return Result<T, E>{InPlaceErrorTag{}, std::forward<E>(error)};
 }
 
 export template <typename T = void, typename E = Error>
 [[nodiscard]]
-constexpr Result<T, E> Err(const E &error) {
+constexpr auto Err(const E &error) -> Result<T, E> {
   return Result<T, E>{InPlaceErrorTag{}, error};
 }
 
 export template <typename T = void, typename E = Error, typename... Args>
 [[nodiscard]]
-constexpr Result<T, E> ErrEmplace(Args &&...args) {
+constexpr auto ErrEmplace(Args &&...args) -> Result<T, E> {
   return Result<T, E>{InPlaceErrorTag{}, std::forward<Args>(args)...};
 }
 
