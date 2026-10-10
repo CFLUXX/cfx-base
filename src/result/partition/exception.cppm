@@ -4,7 +4,7 @@ module;
 #include <type_traits>
 #include <utility>
 
-export module cfx.base.result:exception;
+export module cfx.base.result.result:exception;
 
 namespace cfx {
 

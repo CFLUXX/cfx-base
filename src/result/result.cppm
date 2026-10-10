@@ -17,9 +17,10 @@ module;
 #include <type_traits>
 #include <utility>
 
-export module cfx.base.result;
-export import cfx.base.result.error;
-import :exception;
+export module cfx.base.result.result;
+export import :exception;
+// import cfx.base.result.error:types;
+import cfx.base.result.error;
 
 namespace cfx {
 
@@ -402,7 +403,9 @@ public:
   }
 
   [[nodiscard]]
-  constexpr auto operator->(this auto &&self) noexcept {
+  constexpr auto operator->(this auto &&self) noexcept
+    requires std::is_lvalue_reference_v<decltype(self)>
+  {
     return std::addressof(std::forward<decltype(self)>(self).storage_.value);
   }
 
@@ -716,7 +719,7 @@ public:
     return has_value_;
   }
 
-  [[nodiscard]] constexpr auto Value(this auto &&self) -> void {
+  constexpr auto Value(this auto &&self) -> void {
     if (!self.has_value_) {
       throw BadResultAccess{std::forward<decltype(self)>(self).storage_.error};
     }

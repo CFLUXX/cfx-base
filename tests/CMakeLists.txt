@@ -12,11 +12,11 @@ if(NOT GTest_FOUND)
     FetchContent_MakeAvailable(googletest)
 endif()
 
-add_executable(base_tests
-    base_test.cc
+add_executable(result_tests
+    result_test.cc
 )
 
-target_link_libraries(base_tests
+target_link_libraries(result_tests
     PRIVATE
         cfxbase
         GTest::gmock_main
